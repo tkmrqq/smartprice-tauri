@@ -1,0 +1,114 @@
+/*
+  SmartPrice-РБ — design tokens
+  ------------------------------------------------------------------
+  Направление: рабочий инструмент для расчёта розничных цен и печати
+  ценников, а не маркетинговая страница. Приоритет — плотность данных,
+  читаемость таблицы и быстрое сканирование статусов при вводе.
+
+  Палитра: банкнотный тёмно-бирюзовый (доверие/финансы) + ржаво-янтарный
+  акцент для предупреждений + кирпично-красный для регулируемых позиций —
+  сознательно не терракотовый/кремовый дефолт.
+
+  Типографика: Newsreader (заголовки, редакторский "ведомостный" характер)
+  + Inter (плотный UI-текст) + IBM Plex Mono (цифры — табличное
+  выравнивание разрядов в колонках цен, отсылка к чекам/квитанциям).
+*/
+
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+:root {
+  /* Color */
+  --color-paper: #f6f5f0;
+  --color-surface: #ffffff;
+  --color-ink: #1e2320;
+  --color-ink-muted: #5b6460;
+  --color-line: #dcd8cc;
+  --color-line-strong: #c3beac;
+
+  --color-brand: #1f6f5c;
+  --color-brand-dark: #165646;
+  --color-brand-tint: #e3f0ec;
+
+  --color-warning: #a9761c;
+  --color-warning-tint: #faf0d6;
+  --color-warning-line: #e6cd8f;
+
+  --color-danger: #a3402f;
+  --color-danger-tint: #f7e4de;
+  --color-danger-line: #e3b6a7;
+
+  --color-focus: #1f6f5c;
+
+  /* Type */
+  --font-display: "Newsreader", "Georgia", serif;
+  --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* Layout */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --shadow-card: 0 1px 2px rgba(30, 35, 32, 0.06), 0 1px 1px rgba(30, 35, 32, 0.04);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-ink);
+}
+
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

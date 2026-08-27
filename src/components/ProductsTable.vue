@@ -15,6 +15,21 @@ function rowClass(row) {
 <template>
   <div class="table-wrap">
     <table class="products-table">
+      <colgroup>
+        <col style="width: 22%" />
+        <col style="width: 8%" />
+        <col style="width: 7%" />
+        <col style="width: 5%" />
+        <col style="width: 7%" />
+        <col style="width: 7%" />
+        <col style="width: 6%" />
+        <col style="width: 9%" />
+        <col style="width: 9%" />
+        <col style="width: 8%" />
+        <col style="width: 8%" />
+        <col style="width: auto" />
+        <col style="width: 32px" />
+      </colgroup>
       <thead>
         <tr>
           <th class="col-name">Наименование товара</th>
@@ -107,6 +122,8 @@ function rowClass(row) {
 
 .products-table {
   width: 100%;
+  min-width: 1040px;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -170,17 +187,15 @@ tbody tr.row-error {
 }
 
 .cell-name {
-  min-width: 220px;
   font-weight: 500;
 }
 
 .cell-num {
-  min-width: 76px;
   text-align: right;
 }
 
 .cell-select {
-  min-width: 56px;
+  width: 100%;
 }
 
 .cell-readonly {

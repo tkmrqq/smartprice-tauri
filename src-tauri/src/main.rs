@@ -1,3 +1,7 @@
+// Скрывает консольное окно cmd в release-сборке (в debug — оставляем,
+// удобно видеть println!/eprintln! при разработке).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // Вся бизнес-логика (расчёт цен, парсинг ЭДИН, раскладка OCR, генерация
 // ценников) сознательно оставлена на стороне Vue/JS — см. src/lib/*.js.
 // Rust-часть здесь нужна только как нативная оболочка Tauri и мост к
@@ -6,6 +10,8 @@
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())

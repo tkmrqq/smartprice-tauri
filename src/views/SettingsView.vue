@@ -1,12 +1,42 @@
 <script setup>
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings.js";
 import { openRegulatedItemsWindow } from "../lib/windows.js";
+import { checkForUpdates, readAppVersion } from "../lib/appUpdater.js";
 
 const settings = useSettingsStore();
 const apiKeyInput = ref(settings.visionApiKey);
 const showKey = ref(false);
 const saveMessage = ref("");
+const appVersion = ref("…");
+const updateBusy = ref(false);
+const updateProgress = ref(null);
+const updateHint = ref("");
+
+onMounted(async () => {
+  appVersion.value = await readAppVersion();
+});
+
+async function handleCheckUpdates() {
+  updateBusy.value = true;
+  updateProgress.value = null;
+  updateHint.value = "";
+  try {
+    const result = await checkForUpdates({
+      onProgress: (percent) => {
+        updateProgress.value = percent;
+      },
+    });
+    if (result.status === "latest") updateHint.value = "Установлена последняя версия.";
+    else if (result.status === "declined") updateHint.value = `Обновление ${result.version} отложено.`;
+    else if (result.status === "dev") updateHint.value = "В режиме разработки обновления не проверяются.";
+    else if (result.status === "unsupported") updateHint.value = "Доступно только в собранном приложении.";
+    else if (result.status === "error") updateHint.value = result.error || "Ошибка проверки.";
+  } finally {
+    updateBusy.value = false;
+    updateProgress.value = null;
+  }
+}
 
 async function handleSaveKey() {
   await settings.setVisionApiKey(apiKeyInput.value);
@@ -46,6 +76,23 @@ async function handleOpenRegulatedEditor() {
         Статус:
         <strong>{{ settings.hasVisionKey ? "ключ задан" : "ключ не задан" }}</strong>
       </p>
+    </article>
+
+    <article class="card">
+      <h2 class="card-title">Обновления приложения</h2>
+      <p class="card-hint">
+        При запуске release-сборки проверка выполняется автоматически. Здесь можно проверить вручную
+        и установить новую версию с GitHub Releases.
+      </p>
+      <p class="key-status">
+        Текущая версия:
+        <strong>{{ appVersion }}</strong>
+      </p>
+      <button type="button" class="btn btn-primary" :disabled="updateBusy" @click="handleCheckUpdates">
+        {{ updateBusy ? "Проверяем…" : "Проверить обновления" }}
+      </button>
+      <p v-if="updateProgress != null" class="save-message">Загрузка: {{ updateProgress }}%</p>
+      <p v-if="updateHint" class="save-message">{{ updateHint }}</p>
     </article>
 
     <article class="card">

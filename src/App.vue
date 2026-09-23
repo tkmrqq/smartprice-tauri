@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useSettingsStore } from "./stores/settings.js";
 import { initDb } from "./lib/db.js";
 import { REGULATED_ITEMS_UPDATED_EVENT } from "./lib/windows.js";
+import { checkForUpdates } from "./lib/appUpdater.js";
 
 const settings = useSettingsStore();
 const route = useRoute();
@@ -24,6 +25,8 @@ onMounted(async () => {
     unlisten = await listen(REGULATED_ITEMS_UPDATED_EVENT, () => {
       settings.load();
     });
+    // В dev и в браузере проверка пропускается — см. appUpdater.js.
+    void checkForUpdates({ silent: true });
   } catch (e) {
     initError.value = String(e?.message || e);
   }
@@ -43,6 +46,7 @@ onUnmounted(() => {
       </div>
       <nav class="nav">
         <router-link to="/" class="nav-tab">Расчёт цен</router-link>
+        <router-link to="/price-compare" class="nav-tab">Сравнение прайсов</router-link>
         <router-link to="/history" class="nav-tab">История</router-link>
         <router-link to="/settings" class="nav-tab">Настройки</router-link>
       </nav>

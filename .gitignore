@@ -1,6 +1,25 @@
 node_modules/
 dist/
-src-tauri/target/
-src-tauri/gen/
 *.log
 .DS_Store
+Thumbs.db
+Desktop.ini
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+src-tauri/WixTools/
+src-tauri/*.pdb
+src-tauri/2
+
+# Лишние иконки из `npx tauri icon` (мобилка / MS Store).
+# Десктоп оставляем: 32/64/128 png, icon.ico, icon.png, icon.icns
+src-tauri/icons/android/
+src-tauri/icons/ios/
+src-tauri/icons/Square*.png
+src-tauri/icons/StoreLogo.png
+
+# Signing keys — never commit
+*.key
+*.key.pub
+.tauri/

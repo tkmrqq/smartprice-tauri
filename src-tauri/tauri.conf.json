@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SmartPrice-РБ",
+  "productName": "SmartPrice-BY",
   "version": "0.2.0",
   "identifier": "by.smartprice.app",
   "build": {
@@ -19,7 +19,8 @@
         "minWidth": 960,
         "minHeight": 600,
         "resizable": true,
-        "center": true
+        "center": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
@@ -29,11 +30,23 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2RDhBOURFNkNBMzMxRDAKUldUUU1hTnMzcW5ZZGltaWkyqCoOQ0M0bG5HUVdpVkdXT2E2dW15QTArRm5ONGg3V0taR2gyR0sK",
+      "endpoints": [
+        "https://github.com/vladi/smartprice-tauri/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

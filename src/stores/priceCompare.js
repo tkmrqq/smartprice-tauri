@@ -61,6 +61,9 @@ export const usePriceCompareStore = defineStore("priceCompare", {
     results: [],
     hasCompared: false,
     onlyMultiSupplier: true,
+    confirmedMatchKeys: [],
+    separatedMatchKeys: [],
+    reviewMessage: "",
   }),
 
   getters: {
@@ -148,16 +151,55 @@ export const usePriceCompareStore = defineStore("priceCompare", {
     runComparison() {
       const datasets = this.suppliers
         .filter((s) => s.headerRowIndex !== -1 && s.priceBasis)
-        .map((s) => ({ supplierName: s.supplierName, products: computeProducts(s) }));
+        .map((s) => ({ id: s.id, supplierName: s.supplierName, products: computeProducts(s) }));
 
-      this.results = matchAcrossSuppliers(datasets);
+      this.results = matchAcrossSuppliers(datasets).flatMap((group) => {
+        if (this.separatedMatchKeys.includes(group.decisionKey)) {
+          return group.items.map((item) => ({
+            ...group,
+            key: `separated:${item.identity}`,
+            decisionKey: `separated:${item.identity}`,
+            matchType: "manual-split",
+            matchConfidence: 1,
+            needsReview: false,
+            reviewReasons: [],
+            items: [item],
+            supplierCount: 1,
+            cheapest: item,
+            savingsAbs: 0,
+            savingsPct: 0,
+            reviewed: true,
+          }));
+        }
+        return [{
+          ...group,
+          reviewed: this.confirmedMatchKeys.includes(group.decisionKey),
+        }];
+      });
       this.hasCompared = true;
+    },
+
+    confirmMatch(decisionKey) {
+      if (!this.confirmedMatchKeys.includes(decisionKey)) this.confirmedMatchKeys.push(decisionKey);
+      this.results = this.results.map((group) =>
+        group.decisionKey === decisionKey ? { ...group, reviewed: true } : group
+      );
+      this.reviewMessage = "Совпадение подтверждено.";
+    },
+
+    separateMatch(decisionKey) {
+      if (!this.separatedMatchKeys.includes(decisionKey)) this.separatedMatchKeys.push(decisionKey);
+      this.runComparison();
+      this.reviewMessage = "Позиции разделены и больше не сравниваются как один товар.";
     },
 
     reset() {
       this.suppliers = [];
       this.results = [];
       this.hasCompared = false;
+      this.confirmedMatchKeys = [];
+      this.separatedMatchKeys = [];
+      this.reviewMessage = "";
     },
   },
 });

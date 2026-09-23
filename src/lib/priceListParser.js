@@ -156,6 +156,41 @@ function toNumber(value) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function measureFromName(name) {
+  const pattern = /(\d+(?:[.,]\d+)?)\s*(кг|kg|грамм(?:а|ов)?|гр|г|g|ml|мл|литр(?:а|ов)?|л|l)(?=$|[^\p{L}])/iu;
+  const match = String(name ?? "").match(pattern);
+  if (!match) return null;
+
+  const unitAmount = toNumber(match[1]);
+  const unit = match[2].toLowerCase();
+  if (unitAmount == null || unitAmount <= 0) return null;
+
+  const packMatch = String(name ?? "").match(/[*×xх]\s*(\d+)\s*(?:шт|штук|pcs?)(?=$|[^\p{L}])/iu);
+  const packCount = packMatch ? Number(packMatch[1]) : 1;
+  const multiplier = ["кг", "kg", "л", "l"].includes(unit) || unit.startsWith("литр") ? 1000 : 1;
+  const dimension = ["л", "l", "мл", "ml"].includes(unit) || unit.startsWith("литр") ? "volume" : "mass";
+  return {
+    dimension,
+    baseValue: unitAmount * multiplier * packCount,
+    unitAmount,
+    packCount,
+    source: "name",
+  };
+}
+
+function measureFromWeightColumn(value, header) {
+  const amount = toNumber(value);
+  if (amount == null || amount <= 0) return null;
+  const text = String(header ?? "").toLowerCase();
+  if (/кг|\bkg\b/.test(text)) return { dimension: "mass", baseValue: amount * 1000, unitAmount: amount, packCount: 1, source: "column" };
+  if (/мл|\bml\b/.test(text)) return { dimension: "volume", baseValue: amount, unitAmount: amount, packCount: 1, source: "column" };
+  if (/литр|л(?!\p{L})|\bl\b/.test(text)) return { dimension: "volume", baseValue: amount * 1000, unitAmount: amount, packCount: 1, source: "column" };
+  if (/грамм|гр\.?|(?:^|[^\p{L}])г(?:$|[^\p{L}])|\bg\b/.test(text)) {
+    return { dimension: "mass", baseValue: amount, unitAmount: amount, packCount: 1, source: "column" };
+  }
+  return null;
+}
+
 /**
  * Превращает сырые строки в список товаров по заданному сопоставлению
  * колонок. Строка считается товаром, если в ней есть непустое название
@@ -165,7 +200,7 @@ function toNumber(value) {
  *
  * @param {any[][]} rows
  * @param {number} headerRowIndex
- * @param {{barcode?:number, name:number, priceColumn:number, priceWithVat?:number, vatRate?:number, packQty?:number, country?:number}} columns
+ * @param {{barcode?:number, name:number, priceColumn:number, priceWithVat?:number, vatRate?:number, packQty?:number, weight?:number, country?:number}} columns
  *   priceColumn — какую именно колонку использовать как цену для сравнения
  *   (обычно "без НДС", но пользователь может выбрать любую).
  */
@@ -187,9 +222,14 @@ export function extractProducts(rows, headerRowIndex, columns) {
     const barcode = columns.barcode != null ? String(row[columns.barcode] ?? "").trim() : "";
     const vatRate = columns.vatRate != null ? toNumber(row[columns.vatRate]) : null;
     const packQty = columns.packQty != null ? toNumber(row[columns.packQty]) : null;
+    const weightHeader = columns.weight != null ? rows[headerRowIndex]?.[columns.weight] : "";
+    const measure = measureFromName(name) ?? measureFromWeightColumn(
+      columns.weight != null ? row[columns.weight] : null,
+      weightHeader
+    );
     const country = columns.country != null ? String(row[columns.country] ?? "").trim() : "";
 
-    products.push({ name, price, barcode, vatRate, packQty, country, sourceRow: r });
+    products.push({ name, price, barcode, vatRate, packQty, measure, country, sourceRow: r });
   }
 
   return products;

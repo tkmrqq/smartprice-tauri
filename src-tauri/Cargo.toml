@@ -1,6 +1,6 @@
 [package]
 name = "smartprice-by"
-version = "0.2.0"
+version = "0.2.1"
 description = "SmartPrice-РБ — расчёт розничных цен по Пост. №713"
 edition = "2021"
 rust-version = "1.77"

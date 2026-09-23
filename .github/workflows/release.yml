@@ -43,8 +43,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: SmartPrice-РБ v__VERSION__
-          releaseBody: См. список изменений в репозитории.
-          releaseDraft: true
+          releaseName: SmartPrice-BY v__VERSION__
+          releaseBody: Automated SmartPrice-BY build.
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

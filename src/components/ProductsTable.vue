@@ -1,4 +1,5 @@
 <script setup>
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useProductsStore } from "../stores/products.js";
 import StatusChip from "./StatusChip.vue";
 
@@ -10,108 +11,275 @@ function rowClass(row) {
   if (row.regulationStatus === "Регулируется") return "row-regulated";
   return "";
 }
+
+// ---------------------------------------------------------------------
+// Ширина колонок. По умолчанию колонки делят всю ширину окна по долям
+// (frac) и пересчитываются при изменении размера окна. Как только
+// пользователь потянул за границу заголовка — ширины фиксируются в px,
+// запоминаются между запусками, а лишнее место справа остаётся пустым
+// (или появляется горизонтальная прокрутка, если колонки шире окна).
+// ---------------------------------------------------------------------
+const COLS = [
+  { key: "name", label: "Наименование товара", frac: 0.2, min: 140 },
+  { key: "purchasePrice", label: "Закуп., BYN", frac: 0.07, min: 72 },
+  { key: "weight", label: "Вес/объём", frac: 0.06, min: 66 },
+  { key: "unit", label: "Ед.", frac: 0.05, min: 56 },
+  { key: "supplierMarkup", label: "Нац. пост., %", frac: 0.065, min: 78 },
+  { key: "markup", label: "Торг. наценка, %", frac: 0.065, min: 78 },
+  { key: "vat", label: "НДС, %", frac: 0.05, min: 58 },
+  { key: "sortGrade", label: "Сорт/вид", frac: 0.08, min: 80 },
+  { key: "country", label: "Страна", frac: 0.08, min: 80 },
+  { key: "retailPrice", label: "Розничная, BYN", frac: 0.08, min: 90 },
+  { key: "pricePerUnit", label: "Цена за ед.", frac: 0.075, min: 80 },
+  { key: "status", label: "Статус Пост. 713", frac: 0.15, min: 190 },
+];
+const ACTION_WIDTH = 36;
+const MIN_DRAG_WIDTH = 44;
+const MAX_DRAG_WIDTH = 900;
+const STORAGE_KEY = "smartprice.columnWidths.v1";
+
+const wrapRef = ref(null);
+const widths = ref(COLS.map((c) => c.min));
+const customized = ref(false);
+let resizeObserver = null;
+
+const tableMinWidth = computed(() => widths.value.reduce((a, b) => a + b, 0) + ACTION_WIDTH);
+
+function computeFitWidths() {
+  const container = wrapRef.value?.clientWidth || 1200;
+  const available = container - ACTION_WIDTH - 2;
+  const fracSum = COLS.reduce((s, c) => s + c.frac, 0);
+  return COLS.map((c) => Math.max(c.min, Math.floor((available * c.frac) / fracSum)));
+}
+
+function saveWidths() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ widths: widths.value }));
+  } catch {
+    /* хранилище недоступно — не критично */
+  }
+}
+
+function loadSavedWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    const list = saved?.widths;
+    if (
+      Array.isArray(list) &&
+      list.length === COLS.length &&
+      list.every((w) => Number.isFinite(w) && w >= MIN_DRAG_WIDTH)
+    ) {
+      return list;
+    }
+  } catch {
+    /* повреждённые данные — игнорируем */
+  }
+  return null;
+}
+
+function resetWidths() {
+  customized.value = false;
+  widths.value = computeFitWidths();
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function resetColumn(index) {
+  const next = [...widths.value];
+  next[index] = computeFitWidths()[index];
+  widths.value = next;
+  customized.value = true;
+  saveWidths();
+}
+
+function startResize(index, event) {
+  const startX = event.clientX;
+  const startWidth = widths.value[index];
+
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+
+  function onMove(e) {
+    const next = Math.min(MAX_DRAG_WIDTH, Math.max(MIN_DRAG_WIDTH, Math.round(startWidth + e.clientX - startX)));
+    if (next === widths.value[index]) return;
+    customized.value = true;
+    const copy = [...widths.value];
+    copy[index] = next;
+    widths.value = copy;
+  }
+
+  function onUp() {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    if (customized.value) saveWidths();
+  }
+
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+}
+
+onMounted(() => {
+  const saved = loadSavedWidths();
+  if (saved) {
+    widths.value = saved;
+    customized.value = true;
+  } else {
+    widths.value = computeFitWidths();
+  }
+
+  if (typeof ResizeObserver !== "undefined" && wrapRef.value) {
+    resizeObserver = new ResizeObserver(() => {
+      if (!customized.value) widths.value = computeFitWidths();
+    });
+    resizeObserver.observe(wrapRef.value);
+  }
+});
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+});
 </script>
 
 <template>
-  <div class="table-wrap">
-    <table class="products-table">
-      <colgroup>
-        <col style="width: 22%" />
-        <col style="width: 8%" />
-        <col style="width: 7%" />
-        <col style="width: 5%" />
-        <col style="width: 7%" />
-        <col style="width: 7%" />
-        <col style="width: 6%" />
-        <col style="width: 9%" />
-        <col style="width: 9%" />
-        <col style="width: 8%" />
-        <col style="width: 8%" />
-        <col style="width: auto" />
-        <col style="width: 32px" />
-      </colgroup>
-      <thead>
-        <tr>
-          <th class="col-name">Наименование товара</th>
-          <th class="col-num">Закуп., BYN</th>
-          <th class="col-num">Вес/объём</th>
-          <th class="col-unit">Ед.</th>
-          <th class="col-num">Нац. пост., %</th>
-          <th class="col-num">Торг. наценка, %</th>
-          <th class="col-num">НДС, %</th>
-          <th class="col-text">Сорт/вид</th>
-          <th class="col-text">Страна</th>
-          <th class="col-num">Розничная, BYN</th>
-          <th class="col-num">Цена за ед.</th>
-          <th class="col-status">Статус Пост. 713</th>
-          <th class="col-action" aria-label="Действия" />
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in products.rows" :key="row.id" :class="rowClass(row)">
-          <td>
-            <input
-              v-model="row.name"
-              type="text"
-              placeholder="Название товара"
-              class="cell-input cell-name"
-            />
-          </td>
-          <td>
-            <input v-model="row.purchasePrice" type="text" class="cell-input tabular cell-num" placeholder="0,00" />
-          </td>
-          <td>
-            <input v-model="row.weight" type="text" class="cell-input tabular cell-num" />
-          </td>
-          <td>
-            <select v-model="row.unit" class="cell-input cell-select">
-              <option value="шт">шт</option>
-              <option value="кг">кг</option>
-              <option value="л">л</option>
-            </select>
-          </td>
-          <td>
-            <input v-model="row.supplierMarkup" type="text" class="cell-input tabular cell-num" />
-          </td>
-          <td>
-            <input v-model="row.markup" type="text" class="cell-input tabular cell-num" />
-          </td>
-          <td>
-            <input v-model="row.vat" type="text" class="cell-input tabular cell-num" />
-          </td>
-          <td>
-            <input v-model="row.sortGrade" type="text" class="cell-input" />
-          </td>
-          <td>
-            <input v-model="row.country" type="text" class="cell-input" />
-          </td>
-          <td class="tabular cell-readonly cell-num">{{ row.retailPrice || "—" }}</td>
-          <td class="tabular cell-readonly cell-num">{{ row.pricePerUnit || "—" }}</td>
-          <td class="cell-readonly cell-status">
-            <StatusChip
-              :status="row.calcError ? 'Ошибка расчёта' : row.regulationStatus"
-              :limited="row.markupLimited"
-              :unknown="row.markupPercentUnknown"
-            />
-            <div v-if="row.calcError" class="row-error-text">{{ row.calcError }}</div>
-          </td>
-          <td class="cell-action">
-            <button
-              type="button"
-              class="icon-btn"
-              title="Удалить строку"
-              @click="products.removeRow(row.id)"
-            >
-              ✕
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+  <div class="table-block">
+    <div class="table-tools">
+      <span class="tools-hint">Ширину колонок можно менять, потянув за границу в заголовке</span>
+      <button v-if="customized" type="button" class="tools-btn" @click="resetWidths">
+        Сбросить ширину колонок
+      </button>
+    </div>
+
+    <div ref="wrapRef" class="table-wrap">
+      <table class="products-table" :style="{ minWidth: tableMinWidth + 'px' }">
+        <colgroup>
+          <col v-for="(w, i) in widths" :key="COLS[i].key" :style="{ width: w + 'px' }" />
+          <col :style="{ width: ACTION_WIDTH + 'px' }" />
+          <col />
+        </colgroup>
+        <thead>
+          <tr>
+            <th v-for="(c, i) in COLS" :key="c.key">
+              <span class="th-label">{{ c.label }}</span>
+              <span
+                class="resizer"
+                role="separator"
+                aria-orientation="vertical"
+                title="Потяните, чтобы изменить ширину (двойной клик — вернуть по умолчанию)"
+                @pointerdown.prevent="startResize(i, $event)"
+                @dblclick="resetColumn(i)"
+              />
+            </th>
+            <th class="col-action" aria-label="Действия" />
+            <th class="col-filler" />
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in products.rows" :key="row.id" :class="rowClass(row)">
+            <td>
+              <input
+                v-model="row.name"
+                type="text"
+                placeholder="Название товара"
+                class="cell-input cell-name"
+              />
+            </td>
+            <td>
+              <input v-model="row.purchasePrice" type="text" class="cell-input tabular cell-num" placeholder="0,00" />
+            </td>
+            <td>
+              <input v-model="row.weight" type="text" class="cell-input tabular cell-num" />
+            </td>
+            <td>
+              <select v-model="row.unit" class="cell-input cell-select">
+                <option value="шт">шт</option>
+                <option value="кг">кг</option>
+                <option value="л">л</option>
+              </select>
+            </td>
+            <td>
+              <input v-model="row.supplierMarkup" type="text" class="cell-input tabular cell-num" />
+            </td>
+            <td>
+              <input v-model="row.markup" type="text" class="cell-input tabular cell-num" />
+            </td>
+            <td>
+              <input v-model="row.vat" type="text" class="cell-input tabular cell-num" />
+            </td>
+            <td>
+              <input v-model="row.sortGrade" type="text" class="cell-input" />
+            </td>
+            <td>
+              <input v-model="row.country" type="text" class="cell-input" />
+            </td>
+            <td class="tabular cell-readonly cell-num">{{ row.retailPrice || "—" }}</td>
+            <td class="tabular cell-readonly cell-num">{{ row.pricePerUnit || "—" }}</td>
+            <td class="cell-readonly cell-status">
+              <StatusChip
+                :status="row.calcError ? 'Ошибка расчёта' : row.regulationStatus"
+                :limited="row.markupLimited"
+                :unknown="row.markupPercentUnknown"
+              />
+              <div v-if="row.calcError" class="row-error-text">{{ row.calcError }}</div>
+            </td>
+            <td class="cell-action">
+              <button
+                type="button"
+                class="icon-btn"
+                title="Удалить строку"
+                @click="products.removeRow(row.id)"
+              >
+                ✕
+              </button>
+            </td>
+            <td class="cell-filler" />
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.table-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.table-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-height: 22px;
+}
+
+.tools-hint {
+  font-size: 11.5px;
+  color: var(--color-ink-muted);
+}
+
+.tools-btn {
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.tools-btn:hover {
+  color: var(--color-ink);
+  border-color: var(--color-line-strong);
+}
+
 .table-wrap {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
@@ -121,8 +289,7 @@ function rowClass(row) {
 }
 
 .products-table {
-  /* width: 100%; */
-  min-width: 1040px;
+  width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
@@ -142,6 +309,41 @@ thead th {
   color: var(--color-ink-muted);
   white-space: nowrap;
   z-index: 1;
+}
+
+.th-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 6px;
+}
+
+/* Ползунок изменения ширины: узкая зона на правой границе заголовка */
+.resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resizer::after {
+  content: "";
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  right: 3px;
+  width: 1px;
+  background: var(--color-line-strong);
+  transition: background 0.1s ease, top 0.1s ease, bottom 0.1s ease, width 0.1s ease;
+}
+.resizer:hover::after {
+  top: 15%;
+  bottom: 15%;
+  width: 3px;
+  right: 2px;
+  background: var(--color-brand);
 }
 
 tbody td {
@@ -201,18 +403,15 @@ tbody tr.row-error {
 .cell-readonly {
   padding: 6px 10px;
   color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cell-num.cell-readonly {
   font-weight: 600;
 }
 
-.col-status {
-  min-width: 220px;
-}
-
 .cell-action {
-  width: 32px;
   text-align: center;
 }
 

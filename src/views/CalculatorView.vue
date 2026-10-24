@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useProductsStore } from "../stores/products.js";
@@ -7,6 +7,7 @@ import { useSettingsStore } from "../stores/settings.js";
 import { parseEdinXml } from "../lib/edinParser.js";
 import { extractProductsFromInvoicePhoto } from "../lib/visionOcr.js";
 import { buildLabelsHtml } from "../lib/priceLabels.js";
+import { setupTableDraft, clearDraft } from "../lib/tableDraft.js";
 import Toolbar from "../components/Toolbar.vue";
 import ProductsTable from "../components/ProductsTable.vue";
 
@@ -16,6 +17,23 @@ const localError = ref("");
 
 function clearError() {
   localError.value = "";
+}
+
+// Автосохранение текущей таблицы (в т.ч. нерассчитанной): при запуске
+// подтягиваем прошлый черновик, дальше он обновляется сам при любой правке.
+onMounted(() => {
+  const restored = setupTableDraft(products);
+  if (restored) {
+    products.statusMessage = `Восстановлена таблица с прошлого сеанса: ${restored} строк.`;
+  }
+});
+
+function handleClearTable() {
+  const confirmed = window.confirm("Очистить таблицу? Все введённые строки будут удалены.");
+  if (!confirmed) return;
+  clearError();
+  products.reset();
+  clearDraft();
 }
 
 async function handleImportEdin() {
@@ -151,7 +169,10 @@ async function handleGenerateLabels() {
 
     <ProductsTable />
 
-    <p class="status-line">{{ products.statusMessage }}</p>
+    <div class="footer-row">
+      <p class="status-line">{{ products.statusMessage }}</p>
+      <button type="button" class="btn-clear" @click="handleClearTable">Очистить таблицу</button>
+    </div>
   </section>
 </template>
 
@@ -182,9 +203,31 @@ async function handleGenerateLabels() {
   color: var(--color-danger);
 }
 
-.status-line {
+.footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 10px;
+}
+
+.status-line {
+  margin: 0;
   font-size: 12.5px;
   color: var(--color-ink-muted);
+}
+
+.btn-clear {
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-clear:hover {
+  color: var(--color-danger);
+  border-color: var(--color-danger-line);
 }
 </style>

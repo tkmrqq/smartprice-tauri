@@ -9,6 +9,8 @@ const products = useProductsStore();
 const router = useRouter();
 
 const entries = ref([]);
+const selectedIds = ref(new Set());
+let lastToggledIndex = null;
 const query = ref("");
 const isLoading = ref(false);
 const errorMessage = ref("");
@@ -20,6 +22,10 @@ async function load() {
     entries.value = query.value.trim()
       ? await searchHistoryByName(query.value)
       : await getAllHistory();
+    // Оставляем выделенными только те записи, которые ещё есть в списке
+    const visibleIds = new Set(entries.value.map((e) => e.id));
+    selectedIds.value = new Set([...selectedIds.value].filter((id) => visibleIds.has(id)));
+    lastToggledIndex = null;
   } catch (e) {
     errorMessage.value = `Не удалось загрузить историю: ${e.message || e}`;
   } finally {
@@ -38,6 +44,50 @@ async function handleDelete(id) {
   await load();
 }
 
+function isSelected(id) {
+  return selectedIds.value.has(id);
+}
+
+// Клик по чекбоксу; с зажатым Shift выделяется весь диапазон между
+// предыдущей и текущей отмеченной строкой.
+function toggleSelected(index, event) {
+  const id = entries.value[index].id;
+  const next = new Set(selectedIds.value);
+  const shouldSelect = !next.has(id);
+
+  if (event?.shiftKey && lastToggledIndex != null) {
+    const [from, to] = [lastToggledIndex, index].sort((a, b) => a - b);
+    for (let i = from; i <= to; i++) {
+      const rangeId = entries.value[i].id;
+      if (shouldSelect) next.add(rangeId);
+      else next.delete(rangeId);
+    }
+  } else if (shouldSelect) {
+    next.add(id);
+  } else {
+    next.delete(id);
+  }
+
+  selectedIds.value = next;
+  lastToggledIndex = index;
+}
+
+const allSelected = computed(
+  () => entries.value.length > 0 && entries.value.every((e) => selectedIds.value.has(e.id))
+);
+const someSelected = computed(() => selectedIds.value.size > 0 && !allSelected.value);
+const selectedCount = computed(() => selectedIds.value.size);
+
+function toggleAll() {
+  selectedIds.value = allSelected.value ? new Set() : new Set(entries.value.map((e) => e.id));
+  lastToggledIndex = null;
+}
+
+function clearSelection() {
+  selectedIds.value = new Set();
+  lastToggledIndex = null;
+}
+
 async function handleClearAll() {
   if (!entries.value.length) return;
   const confirmed = window.confirm("Удалить всю историю расчётов? Это действие необратимо.");
@@ -46,8 +96,8 @@ async function handleClearAll() {
   await load();
 }
 
-function reuseEntry(entry) {
-  products.addRow({
+function addEntryToTable(entry) {
+  const row = products.addRow({
     name: entry.name,
     purchasePrice: entry.purchase_price,
     weightOrVolume: entry.weight_or_volume,
@@ -55,6 +105,37 @@ function reuseEntry(entry) {
     vat: entry.vat,
     country: entry.country,
   });
+
+  // addRow не принимает наценки и сорт, поэтому выставляем их отдельно.
+  // Торговая наценка — та, что реально применилась при расчёте (с учётом
+  // ограничения по Пост. 713). Пустые значения (старые записи истории,
+  // где этих колонок не было) пропускаем — останутся значения по умолчанию.
+  const restored = {
+    supplierMarkup: entry.supplier_markup,
+    markup: entry.applied_markup,
+    vat: entry.vat,
+    sortGrade: entry.sort_grade,
+  };
+  for (const [field, value] of Object.entries(restored)) {
+    if (value != null && String(value).trim() !== "") {
+      products.updateField(row.id, field, String(value));
+    }
+  }
+}
+
+function reuseEntry(entry) {
+  addEntryToTable(entry);
+  router.push("/");
+}
+
+// Повтор всех выбранных записей одним действием — в том порядке,
+// в котором они показаны в списке.
+function reuseSelected() {
+  const chosen = entries.value.filter((e) => selectedIds.value.has(e.id));
+  if (!chosen.length) return;
+  for (const entry of chosen) addEntryToTable(entry);
+  products.statusMessage = `Добавлено из истории: ${chosen.length}. Проверьте данные перед расчётом.`;
+  clearSelection();
   router.push("/");
 }
 
@@ -68,6 +149,17 @@ onMounted(load);
     <div class="header-row">
       <h1 class="page-title">История расчётов</h1>
       <div class="header-actions">
+        <button
+          v-if="selectedCount"
+          type="button"
+          class="btn btn-primary"
+          @click="reuseSelected"
+        >
+          Повторить выбранные ({{ selectedCount }})
+        </button>
+        <button v-if="selectedCount" type="button" class="btn btn-ghost btn-plain" @click="clearSelection">
+          Снять выбор
+        </button>
         <input
           v-model="query"
           type="text"
@@ -87,6 +179,17 @@ onMounted(load);
       <table class="history-table">
         <thead>
           <tr>
+            <th class="col-check">
+              <input
+                type="checkbox"
+                class="check"
+                title="Выбрать все"
+                :checked="allSelected"
+                :indeterminate.prop="someSelected"
+                :disabled="!hasEntries"
+                @change="toggleAll"
+              />
+            </th>
             <th>Дата</th>
             <th>Наименование</th>
             <th>Закуп.</th>
@@ -98,7 +201,19 @@ onMounted(load);
           </tr>
         </thead>
         <tbody>
-          <tr v-for="entry in entries" :key="entry.id">
+          <tr
+            v-for="(entry, index) in entries"
+            :key="entry.id"
+            :class="{ 'row-selected': isSelected(entry.id) }"
+          >
+            <td class="col-check">
+              <input
+                type="checkbox"
+                class="check"
+                :checked="isSelected(entry.id)"
+                @click="toggleSelected(index, $event)"
+              />
+            </td>
             <td class="tabular cell-date">{{ entry.created_at }}</td>
             <td>{{ entry.name }}</td>
             <td class="tabular cell-num">{{ entry.purchase_price }}</td>
@@ -114,7 +229,7 @@ onMounted(load);
             </td>
           </tr>
           <tr v-if="!isLoading && !hasEntries">
-            <td colspan="8" class="empty-cell">
+            <td colspan="9" class="empty-cell">
               {{ query ? "Ничего не найдено." : "История пуста — здесь появятся ваши расчёты." }}
             </td>
           </tr>
@@ -180,6 +295,44 @@ onMounted(load);
 .btn-ghost:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn {
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--color-brand-dark);
+}
+/* «Снять выбор» — обычная кнопка, не красная как «Очистить всё» */
+.btn-plain:hover:not(:disabled) {
+  color: var(--color-ink);
+  border-color: var(--color-line-strong);
+}
+
+.col-check {
+  width: 38px;
+  text-align: center;
+}
+.check {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
+tbody tr.row-selected {
+  background: var(--color-brand-tint);
 }
 
 .alert-danger {

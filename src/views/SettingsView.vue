@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, computed } from "vue";
+import { onMounted, ref, watch, computed } from "vue";
 import { useSettingsStore } from "../stores/settings.js";
 import { saveBackupToFile, readBackupFromFile, applyBackup } from "../lib/backupFlow.js";
 import { describeBackup, BackupError } from "../lib/backup.js";
@@ -10,6 +10,35 @@ const apiKeyInput = ref(settings.visionApiKey);
 const showKey = ref(false);
 const saveMessage = ref("");
 const showRegulatedEditor = ref(false);
+const appVersion = ref("…");
+const updateBusy = ref(false);
+const updateProgress = ref(null);
+const updateHint = ref("");
+
+onMounted(async () => {
+  appVersion.value = await readAppVersion();
+});
+
+async function handleCheckUpdates() {
+  updateBusy.value = true;
+  updateProgress.value = null;
+  updateHint.value = "";
+  try {
+    const result = await checkForUpdates({
+      onProgress: (percent) => {
+        updateProgress.value = percent;
+      },
+    });
+    if (result.status === "latest") updateHint.value = "Установлена последняя версия.";
+    else if (result.status === "declined") updateHint.value = `Обновление ${result.version} отложено.`;
+    else if (result.status === "dev") updateHint.value = "В режиме разработки обновления не проверяются.";
+    else if (result.status === "unsupported") updateHint.value = "Доступно только в собранном приложении.";
+    else if (result.status === "error") updateHint.value = result.error || "Ошибка проверки.";
+  } finally {
+    updateBusy.value = false;
+    updateProgress.value = null;
+  }
+}
 
 async function handleSaveKey() {
   await settings.setVisionApiKey(apiKeyInput.value);
@@ -166,6 +195,26 @@ async function handleOpenRegulatedEditor() {
         <button type="button" class="btn btn-primary" @click="handleSaveLabels">Сохранить</button>
         <span v-if="labelsSaveMessage" class="save-message">{{ labelsSaveMessage }}</span>
       </div>
+    </article>
+
+    <article class="card">
+      <div class="card-heading">
+        <h2 class="card-title">Обновления приложения</h2>
+        <span class="hint-icon"
+          title="При запуске release-сборки проверка выполняется автоматически. Здесь можно проверить вручную и установить новую версию с GitHub Releases."
+          aria-label="Подсказка о проверке обновлений">
+          ?
+        </span>
+      </div>
+      <p class="key-status">
+        Текущая версия:
+        <strong>{{ appVersion }}</strong>
+      </p>
+      <button type="button" class="btn btn-primary" :disabled="updateBusy" @click="handleCheckUpdates">
+        {{ updateBusy ? "Проверяем…" : "Проверить обновления" }}
+      </button>
+      <p v-if="updateProgress != null" class="save-message">Загрузка: {{ updateProgress }}%</p>
+      <p v-if="updateHint" class="save-message">{{ updateHint }}</p>
     </article>
 
     <article class="card">

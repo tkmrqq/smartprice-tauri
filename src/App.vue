@@ -3,6 +3,7 @@ import { onMounted, ref, computed } from "vue";
 import { useSettingsStore } from "./stores/settings.js";
 import { initDb } from "./lib/db.js";
 import { saveBackupToFile } from "./lib/backupFlow.js";
+import { checkForUpdates } from "./lib/appUpdater.js";
 
 const settings = useSettingsStore();
 const initError = ref("");
@@ -33,6 +34,9 @@ onMounted(async () => {
   } catch (e) {
     initError.value = String(e?.message || e);
   }
+  // Тихая проверка при старте: без неё обновление находится только по кнопке
+  // в настройках. Не ждём результата, чтобы не задерживать запуск.
+  checkForUpdates({ silent: true });
 });
 
 </script>

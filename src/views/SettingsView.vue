@@ -4,6 +4,7 @@ import { useSettingsStore } from "../stores/settings.js";
 import { saveBackupToFile, readBackupFromFile, applyBackup } from "../lib/backupFlow.js";
 import { describeBackup, BackupError } from "../lib/backup.js";
 import RegulatedItemsEditor from "./RegulatedItemsView.vue";
+import { checkForUpdates, readAppVersion } from "../lib/appUpdater.js";
 
 const settings = useSettingsStore();
 const apiKeyInput = ref(settings.visionApiKey);

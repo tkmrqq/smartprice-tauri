@@ -1,9 +1,6 @@
 <script setup>
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { useRouter } from "vue-router";
-import * as XLSX from "xlsx";
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
 import { usePriceCompareStore } from "../stores/priceCompare.js";
 import { useProductsStore } from "../stores/products.js";
 import SupplierFileCard from "../components/SupplierFileCard.vue";
@@ -14,10 +11,6 @@ const router = useRouter();
 
 const isDragging = ref(false);
 const fileInput = ref(null);
-const exportMessage = ref("");
-const hasUnreviewedMatches = computed(() =>
-  store.visibleResults.some((group) => group.needsReview && !group.reviewed)
-);
 
 const ACCEPTED_EXTENSIONS = [".xlsx", ".xls", ".xlsm"];
 
@@ -46,88 +39,29 @@ function openFilePicker() {
 }
 
 function formatMoney(value) {
-  return Number(value).toFixed(2).replace(".", ",");
+  return value.toFixed(2).replace(".", ",");
 }
 
-function reviewStatus(group) {
-  if (group.matchType === "manual-split") return "Разделено вручную";
-  if (group.reviewed) return "Подтверждено";
-  return group.needsReview ? "Проверить" : "Автоматически";
-}
-
-function addToCalculator(group) {
-  productsStore.addRow({
+// Через importProducts — тогда из справочника подставятся наценки и прочее
+function toProduct(group) {
+  return {
     name: group.displayName,
+    barcode: group.cheapest.rawBarcode,
     purchasePrice: group.cheapest.price,
-    weightOrVolume: group.cheapest.measure?.baseValue
-      ? group.cheapest.measure.baseValue / 1000
-      : undefined,
-    unit: group.cheapest.measure?.dimension === "mass"
-      ? "кг"
-      : group.cheapest.measure?.dimension === "volume" ? "л" : undefined,
-    vat: group.cheapest.vatRate != null ? group.cheapest.vatRate * 100 : undefined,
+    vat: group.cheapest.vatRate != null ? Number((group.cheapest.vatRate * 100).toFixed(2)) : undefined,
     country: group.cheapest.country || undefined,
-  });
+  };
 }
 
-function addAllToCalculator() {
-  if (hasUnreviewedMatches.value) return;
-  for (const group of store.visibleResults) addToCalculator(group);
+async function addToCalculator(group) {
+  await productsStore.importProducts([toProduct(group)]);
+}
+
+async function addAllToCalculator() {
+  const { filled } = await productsStore.importProducts(store.visibleResults.map(toProduct));
+  productsStore.statusMessage = `Добавлено из сравнения прайсов: ${store.visibleResults.length}.` +
+    (filled ? ` Подставлено из справочника: ${filled}.` : "");
   router.push("/");
-}
-
-async function exportResults() {
-  const date = new Date().toISOString().slice(0, 10);
-  const path = await save({
-    defaultPath: `Сравнение цен ${date}.xlsx`,
-    filters: [{ name: "Книга Excel", extensions: ["xlsx"] }],
-  });
-  if (!path) return;
-
-  const summaryRows = store.visibleResults.map((group) => ({
-    Товар: group.displayName,
-    Поставщик: group.cheapest.supplier,
-    "Штрихкод": group.cheapest.barcode,
-    "Цена упаковки, BYN": group.cheapest.price,
-    "Цена сравнения, BYN": group.cheapest.comparisonPrice,
-    "Единица сравнения": group.comparisonUnit,
-    "Экономия, BYN": group.savingsAbs,
-    "Экономия, %": group.savingsPct * 100,
-    "Совпадение": group.matchType === "barcode" ? "Штрихкод" : "Название",
-    "Уверенность, %": Math.round(group.matchConfidence * 100),
-    "Статус проверки": reviewStatus(group),
-  }));
-  const offerRows = store.visibleResults.flatMap((group) => group.items.map((item) => ({
-    Товар: group.displayName,
-    "Название в прайсе": item.name,
-    Поставщик: item.supplier,
-    Штрихкод: item.barcode,
-    Фасовка: item.measureLabel,
-    "Цена упаковки, BYN": item.price,
-    "Цена за кг/л, BYN": item.unitPrice,
-    "Лучшая цена": item.identity === group.cheapest.identity ? "Да" : "",
-    "Совпадение": group.matchType === "barcode" ? "Штрихкод" : "Название",
-    "Уверенность, %": Math.round(group.matchConfidence * 100),
-    "Статус проверки": reviewStatus(group),
-    "НДС, %": item.vatRate == null ? "" : item.vatRate * 100,
-    Страна: item.country,
-  })));
-
-  const workbook = XLSX.utils.book_new();
-  const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
-  const offersSheet = XLSX.utils.json_to_sheet(offerRows);
-  summarySheet["!cols"] = [34, 24, 18, 18, 18, 20, 16, 14, 16, 16, 20].map((wch) => ({ wch }));
-  offersSheet["!cols"] = [34, 42, 24, 18, 14, 18, 18, 14, 16, 16, 20, 12, 18].map((wch) => ({ wch }));
-  XLSX.utils.book_append_sheet(workbook, summarySheet, "Рекомендации");
-  XLSX.utils.book_append_sheet(workbook, offersSheet, "Все предложения");
-
-  try {
-    const bytes = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-    await writeFile(path, new Uint8Array(bytes));
-    exportMessage.value = "Excel-файл сохранён.";
-  } catch (error) {
-    exportMessage.value = `Не удалось сохранить Excel-файл: ${error?.message ?? error}`;
-  }
 }
 </script>
 
@@ -137,8 +71,7 @@ async function exportResults() {
     <p class="page-subtitle">
       Загрузите прайс-листы нескольких поставщиков (.xlsx/.xls) — колонки определятся
       автоматически, но их можно поправить вручную. Товары сопоставляются в первую очередь по
-      штрихкоду, а без него — по похожести названия. В таблице показаны цены упаковок из прайсов;
-      фасовка учитывает количество штук в упаковке.
+      штрихкоду, а без него — по похожести названия.
     </p>
 
     <div
@@ -185,38 +118,21 @@ async function exportResults() {
       <div class="results-header">
         <h2 class="results-title">
           Результат сравнения
-          <span class="results-count">({{ store.visibleResults.length }} позиций показано)</span>
+          <span class="results-count">({{ store.matchableCount }} товаров у ≥2 поставщиков)</span>
         </h2>
-        <div class="filter-control">
-          <label class="toggle">
-            <input type="checkbox" v-model="store.onlyMultiSupplier" />
-            Только найденные у нескольких поставщиков
-          </label>
-          <small>{{ store.onlyMultiSupplier ? 'Одиночные позиции скрыты' : 'Включая товары, найденные только в одном прайсе' }}</small>
-        </div>
+        <label class="toggle">
+          <input type="checkbox" v-model="store.onlyMultiSupplier" />
+          Только товары, встречающиеся у нескольких поставщиков
+        </label>
         <button
           v-if="store.visibleResults.length"
           type="button"
           class="btn btn-ghost"
-          :disabled="hasUnreviewedMatches"
-          :title="hasUnreviewedMatches ? 'Сначала проверьте сомнительные совпадения' : ''"
           @click="addAllToCalculator"
         >
-          {{ hasUnreviewedMatches ? "Сначала проверьте совпадения" : "Добавить всё в расчёт →" }}
-        </button>
-        <button
-          v-if="store.visibleResults.length"
-          type="button"
-          class="btn btn-ghost"
-          @click="exportResults"
-        >
-          Экспорт в Excel
+          Добавить всё в расчёт →
         </button>
       </div>
-
-      <p v-if="store.reviewMessage || exportMessage" class="action-message">
-        {{ store.reviewMessage || exportMessage }}
-      </p>
 
       <div class="table-wrap">
         <table class="results-table">
@@ -225,26 +141,18 @@ async function exportResults() {
               <th class="col-name">Товар</th>
               <th class="col-match">Сопоставление</th>
               <th class="col-suppliers">Цены поставщиков</th>
-              <th class="col-best">Лучшая цена за упаковку</th>
-              <th class="col-savings">Разница цен</th>
+              <th class="col-num">Лучшая цена</th>
+              <th class="col-num">Экономия</th>
               <th class="col-action" />
             </tr>
           </thead>
           <tbody>
-            <tr v-for="group in store.visibleResults" :key="group.decisionKey" :class="{ 'row-review': group.needsReview && !group.reviewed }">
+            <tr v-for="group in store.visibleResults" :key="group.key">
               <td class="cell-name">{{ group.displayName }}</td>
               <td>
                 <span class="match-badge" :class="group.matchType">
-                  {{ group.matchType === "barcode" ? "по штрихкоду" : group.matchType === "manual-split" ? "разделено" : "по названию" }}
-                  · {{ Math.round(group.matchConfidence * 100) }}%
+                  {{ group.matchType === "barcode" ? "по штрихкоду" : "по названию" }}
                 </span>
-                <div v-if="group.needsReview && !group.reviewed">
-                  <p v-for="reason in group.reviewReasons" :key="reason" class="match-warning">{{ reason }}</p>
-                </div>
-                <div v-if="group.needsReview && !group.reviewed" class="review-actions">
-                  <button type="button" class="link-btn" @click="store.confirmMatch(group.decisionKey)">Это один товар</button>
-                  <button type="button" class="link-btn link-btn-muted" @click="store.separateMatch(group.decisionKey)">Разделить</button>
-                </div>
               </td>
               <td>
                 <ul class="supplier-prices">
@@ -254,32 +162,27 @@ async function exportResults() {
                     :class="{ 'is-cheapest': item === group.cheapest }"
                   >
                     <span class="supplier-name">{{ item.supplier }}</span>
-                    <span class="supplier-offer-prices">
-                      <span class="tabular supplier-price">{{ formatMoney(item.price) }} / уп.</span>
-                      <small v-if="item.measureLabel" class="unit-price-note">{{ item.measureLabel }}</small>
-                    </span>
+                    <span class="tabular supplier-price">{{ formatMoney(item.price) }}</span>
                   </li>
                 </ul>
-                <span v-if="group.reviewed" class="reviewed-note">Проверено вручную</span>
               </td>
-              <td class="tabular cell-num cell-best">{{ formatMoney(group.cheapest.price) }} / уп.</td>
+              <td class="tabular cell-num cell-best">{{ formatMoney(group.cheapest.price) }}</td>
               <td class="tabular cell-num">
                 <span v-if="group.supplierCount > 1" class="savings">
-                  −{{ formatMoney(group.savingsAbs) }} BYN ({{ (group.savingsPct * 100).toFixed(0) }}%)
+                  −{{ formatMoney(group.savingsAbs) }} ({{ (group.savingsPct * 100).toFixed(0) }}%)
                 </span>
                 <span v-else class="cell-muted">—</span>
               </td>
               <td class="cell-action">
-                <button type="button" class="link-btn" :disabled="group.needsReview && !group.reviewed" @click="addToCalculator(group)">
+                <button type="button" class="link-btn" @click="addToCalculator(group)">
                   В расчёт →
                 </button>
               </td>
             </tr>
             <tr v-if="!store.visibleResults.length">
               <td colspan="6" class="empty-cell">
-                {{ store.onlyMultiSupplier
-                  ? 'Нет товаров, найденных у нескольких поставщиков. Проверьте сопоставление колонок или снимите фильтр.'
-                  : 'В загруженных прайсах нет товаров для отображения.' }}
+                Нет товаров, совпадающих у нескольких поставщиков. Проверьте сопоставление колонок
+                выше или снимите фильтр.
               </td>
             </tr>
           </tbody>
@@ -378,16 +281,6 @@ async function exportResults() {
 .btn-ghost:hover {
   background: var(--color-paper);
 }
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.action-message {
-  margin: -6px 0 0;
-  color: var(--color-ink-muted);
-  font-size: 12px;
-}
 
 .results-header {
   display: flex;
@@ -404,17 +297,6 @@ async function exportResults() {
   font-size: 12px;
   font-weight: 400;
   color: var(--color-ink-muted);
-}
-
-.filter-control {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.filter-control small {
-  padding-left: 22px;
-  color: var(--color-ink-muted);
-  font-size: 10px;
 }
 
 .toggle {
@@ -436,29 +318,25 @@ async function exportResults() {
 
 .results-table {
   width: 100%;
-  min-width: 1050px;
   border-collapse: collapse;
   font-size: 13px;
   table-layout: fixed;
 }
 
 .col-name {
-  width: 25%;
+  width: 26%;
 }
 .col-match {
-  width: 14%;
+  width: 10%;
 }
 .col-suppliers {
-  width: 27%;
+  width: 28%;
 }
-.col-best {
-  width: 13%;
-}
-.col-savings {
-  width: 13%;
+.col-num {
+  width: 12%;
 }
 .col-action {
-  width: 8%;
+  width: 10%;
 }
 
 thead th {
@@ -481,10 +359,6 @@ tbody td {
   vertical-align: top;
 }
 
-.row-review {
-  background: color-mix(in srgb, var(--color-warning-tint) 36%, transparent);
-}
-
 .cell-name {
   font-weight: 500;
 }
@@ -503,34 +377,6 @@ tbody td {
 .match-badge.name {
   background: var(--color-warning-tint);
   color: var(--color-warning);
-}
-.match-badge.manual-split {
-  background: var(--color-paper);
-  color: var(--color-ink-muted);
-}
-
-.match-warning {
-  margin: 5px 0 0;
-  max-width: 180px;
-  color: var(--color-warning);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.review-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  margin-top: 5px;
-}
-
-.reviewed-note {
-  display: inline-block;
-  margin: 5px 4px 0;
-  color: var(--color-brand-dark);
-  font-size: 11px;
-  font-weight: 500;
 }
 
 .supplier-prices {
@@ -556,17 +402,6 @@ tbody td {
 }
 .supplier-name {
   color: var(--color-ink-muted);
-}
-.supplier-offer-prices {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  text-align: right;
-}
-.unit-price-note {
-  color: var(--color-ink-muted);
-  font-size: 10px;
-  font-weight: 400;
 }
 .is-cheapest .supplier-name {
   color: var(--color-brand-dark);
@@ -600,14 +435,6 @@ tbody td {
 }
 .link-btn:hover {
   text-decoration: underline;
-}
-.link-btn:disabled {
-  color: var(--color-line-strong);
-  cursor: not-allowed;
-  text-decoration: none;
-}
-.link-btn-muted {
-  color: var(--color-ink-muted);
 }
 
 .empty-cell {

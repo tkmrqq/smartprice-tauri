@@ -2,8 +2,8 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import CalculatorView from "./views/CalculatorView.vue";
 import HistoryView from "./views/HistoryView.vue";
 import SettingsView from "./views/SettingsView.vue";
-import RegulatedItemsView from "./views/RegulatedItemsView.vue";
 import PriceCompareView from "./views/PriceCompareView.vue";
+import CatalogView from "./views/CatalogView.vue";
 
 // Hash-история: приложение — статичный index.html без сервера, который умел
 // бы отдавать произвольные пути (в т.ч. для дополнительных нативных окон
@@ -14,8 +14,8 @@ export const router = createRouter({
   routes: [
     { path: "/", name: "calculator", component: CalculatorView },
     { path: "/price-compare", name: "price-compare", component: PriceCompareView },
+    { path: "/catalog", name: "catalog", component: CatalogView },
     { path: "/history", name: "history", component: HistoryView },
     { path: "/settings", name: "settings", component: SettingsView },
-    { path: "/regulated-items", name: "regulated-items", component: RegulatedItemsView },
   ],
 });

@@ -16,9 +16,9 @@ const SAVE_DELAY_MS = 400;
 const RESTORED_ID_BASE = 1_000_000_000;
 
 const ROW_TEXT_FIELDS = [
-  "name", "purchasePrice", "weight", "unit", "supplierMarkup", "markup",
+  "name", "barcode", "purchasePrice", "weight", "unit", "supplierMarkup", "markup",
   "vat", "sortGrade", "country", "retailPrice", "pricePerUnit",
-  "regulationStatus", "calcError",
+  "regulationStatus", "calcError", "prevPurchasePrice",
 ];
 
 function isMeaningfulRow(row) {

@@ -1,45 +1,45 @@
 <script setup>
-import { onMounted, onUnmounted, ref, computed } from "vue";
-import { useRoute } from "vue-router";
-import { listen } from "@tauri-apps/api/event";
+import { onMounted, ref, computed } from "vue";
 import { useSettingsStore } from "./stores/settings.js";
 import { initDb } from "./lib/db.js";
-import { REGULATED_ITEMS_UPDATED_EVENT } from "./lib/windows.js";
-import { checkForUpdates } from "./lib/appUpdater.js";
+import { saveBackupToFile } from "./lib/backupFlow.js";
 
 const settings = useSettingsStore();
-const route = useRoute();
 const initError = ref("");
-let unlisten = null;
 
-// Окно редактора категорий открывается как отдельное нативное окно поверх
-// того же index.html — в нём не нужна навигация основного приложения.
-const isStandaloneWindow = computed(() => route.name === "regulated-items");
+// Напоминание о резервной копии: раз в неделю, пока копию не сделают
+const backupReminderDismissed = ref(false);
+const backupSaving = ref(false);
+const showBackupReminder = computed(
+  () => settings.loaded && settings.backupDue && !backupReminderDismissed.value
+);
+
+async function saveBackupFromReminder() {
+  backupSaving.value = true;
+  try {
+    await saveBackupToFile();
+  } catch (e) {
+    initError.value = `Не удалось сохранить копию: ${e.message || e}`;
+  } finally {
+    backupSaving.value = false;
+  }
+}
 
 onMounted(async () => {
   try {
     await settings.load();
     await initDb();
-    // Если категории отредактировали в отдельном окне — подхватываем
-    // изменения здесь же, без перезапуска приложения.
-    unlisten = await listen(REGULATED_ITEMS_UPDATED_EVENT, () => {
-      settings.load();
-    });
-    // В dev и в браузере проверка пропускается — см. appUpdater.js.
-    void checkForUpdates({ silent: true });
+    
   } catch (e) {
     initError.value = String(e?.message || e);
   }
 });
 
-onUnmounted(() => {
-  if (unlisten) unlisten();
-});
 </script>
 
 <template>
   <div class="shell">
-    <header v-if="!isStandaloneWindow" class="topbar">
+    <header class="topbar">
       <div class="brand">
         <span class="brand-mark">SmartPrice</span>
         <span class="brand-tag">РБ</span>
@@ -47,16 +47,27 @@ onUnmounted(() => {
       <nav class="nav">
         <router-link to="/" class="nav-tab">Расчёт цен</router-link>
         <router-link to="/price-compare" class="nav-tab">Сравнение прайсов</router-link>
+        <router-link to="/catalog" class="nav-tab">Товары</router-link>
         <router-link to="/history" class="nav-tab">История</router-link>
         <router-link to="/settings" class="nav-tab">Настройки</router-link>
       </nav>
     </header>
 
+    <div v-if="showBackupReminder" class="backup-reminder">
+      <span>Давно не сохраняли резервную копию данных (история, справочник, настройки).</span>
+      <span class="backup-reminder-actions">
+        <button type="button" class="reminder-btn reminder-btn-primary" :disabled="backupSaving" @click="saveBackupFromReminder">
+          Сохранить копию…
+        </button>
+        <button type="button" class="reminder-btn" @click="backupReminderDismissed = true">Позже</button>
+      </span>
+    </div>
+
     <div v-if="initError" class="init-error">
       Не удалось инициализировать приложение: {{ initError }}
     </div>
 
-    <main class="content" :class="{ 'content-standalone': isStandaloneWindow }">
+    <main class="content">
       <router-view />
     </main>
   </div>
@@ -147,6 +158,40 @@ onUnmounted(() => {
   padding-left: 18px;
 }
 
+.backup-reminder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--color-warning-tint);
+  border-bottom: 1px solid var(--color-warning-line);
+  color: var(--color-warning);
+  padding: 8px 24px;
+  font-size: 13px;
+}
+.backup-reminder-actions {
+  display: flex;
+  gap: 8px;
+}
+.reminder-btn {
+  border: 1px solid var(--color-warning-line);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+.reminder-btn-primary {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+}
+.reminder-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .init-error {
   background: var(--color-danger-tint);
   border-bottom: 1px solid var(--color-danger-line);
@@ -160,4 +205,9 @@ onUnmounted(() => {
   overflow: auto;
   padding: 24px;
 }
+
+.content:has(.editor-mode) {
+  padding-top: 0;
+}
+
 </style>

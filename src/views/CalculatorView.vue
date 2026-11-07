@@ -8,12 +8,31 @@ import { parseEdinXml } from "../lib/edinParser.js";
 import { extractProductsFromInvoicePhoto } from "../lib/visionOcr.js";
 import { buildLabelsHtml } from "../lib/priceLabels.js";
 import { setupTableDraft, clearDraft } from "../lib/tableDraft.js";
+import { getCatalogByBarcodes, markLabelsPrinted } from "../lib/db.js";
+import { catalogKey, needsReprint } from "../lib/catalog.js";
 import Toolbar from "../components/Toolbar.vue";
 import ProductsTable from "../components/ProductsTable.vue";
 
 const products = useProductsStore();
 const settings = useSettingsStore();
 const localError = ref("");
+
+// Печатать ценники только по тем товарам, у которых розничная цена отличается
+// от напечатанной в прошлый раз (или товар печатается впервые).
+const ONLY_CHANGED_KEY = "smartprice.onlyChangedLabels";
+const onlyChangedLabels = ref(localStorage.getItem(ONLY_CHANGED_KEY) === "1");
+
+function onOnlyChangedToggle() {
+  try {
+    localStorage.setItem(ONLY_CHANGED_KEY, onlyChangedLabels.value ? "1" : "0");
+  } catch {
+    /* не критично */
+  }
+}
+
+function catalogNote(filled) {
+  return filled ? ` Подставлено из справочника: ${filled}.` : "";
+}
 
 function clearError() {
   localError.value = "";
@@ -55,7 +74,7 @@ async function handleImportEdin() {
       return;
     }
 
-    products.importProducts(parsed);
+    const { filled } = await products.importProducts(parsed);
 
     const parts = [];
     if (meta.documentId) parts.push(meta.documentId);
@@ -64,7 +83,7 @@ async function handleImportEdin() {
       parts.push(`«${short}»`);
     }
     const extra = parts.length ? ` (${parts.join(", ")})` : "";
-    products.statusMessage = `Импортировано из ЭДИН: ${parsed.length} товаров${extra}. Проверьте данные перед расчётом.`;
+    products.statusMessage = `Импортировано из ЭДИН: ${parsed.length} товаров${extra}.${catalogNote(filled)} Проверьте данные перед расчётом.`;
   } catch (e) {
     localError.value = `Ошибка импорта ЭДИН: ${e.message || e}`;
   } finally {
@@ -99,8 +118,8 @@ async function handleImportPhoto() {
       return;
     }
 
-    products.importProducts(parsed);
-    products.statusMessage = `Распознано товаров: ${parsed.length}. Проверьте данные перед расчётом.`;
+    const { filled } = await products.importProducts(parsed);
+    products.statusMessage = `Распознано товаров: ${parsed.length}.${catalogNote(filled)} Проверьте данные перед расчётом.`;
   } catch (e) {
     localError.value = `Ошибка распознавания: ${e.message || e}`;
     products.statusMessage = "Операция завершилась с ошибкой.";
@@ -119,22 +138,38 @@ async function handleCalculate() {
 
 async function handleGenerateLabels() {
   clearError();
-  const rowsData = products.rows
-    .filter((r) => r.name.trim() && r.retailPrice)
-    .map((r) => ({
-      name: r.name,
-      retailPrice: r.retailPrice,
-      pricePerUnit: r.pricePerUnit,
-      unit: r.unit,
-      weight: r.weight,
-      sortGrade: r.sortGrade,
-      country: r.country,
-    }));
+  const calculated = products.rows.filter((r) => r.name.trim() && r.retailPrice);
 
-  if (!rowsData.length) {
+  if (!calculated.length) {
     localError.value = "Сначала выполните расчёт цен для хотя бы одного товара.";
     return;
   }
+
+  let chosen = calculated;
+  if (onlyChangedLabels.value) {
+    let catalog = new Map();
+    try {
+      catalog = await getCatalogByBarcodes(calculated.map((r) => catalogKey(r.barcode)));
+    } catch (e) {
+      console.error("Справочник недоступен, печатаем все ценники:", e);
+    }
+    chosen = calculated.filter((r) => needsReprint(r, catalog.get(catalogKey(r.barcode))));
+    if (!chosen.length) {
+      localError.value = "Все цены совпадают с ранее напечатанными — печатать нечего. Снимите галочку, чтобы напечатать всё.";
+      return;
+    }
+  }
+
+  const rowsData = chosen.map((r) => ({
+    name: r.name,
+    barcode: r.barcode,
+    retailPrice: r.retailPrice,
+    pricePerUnit: r.pricePerUnit,
+    unit: r.unit,
+    weight: r.weight,
+    sortGrade: r.sortGrade,
+    country: r.country,
+  }));
 
   const savePath = await save({
     title: "Сохранить ценники",
@@ -144,11 +179,29 @@ async function handleGenerateLabels() {
   if (!savePath) return;
 
   try {
-    await writeTextFile(savePath, buildLabelsHtml(rowsData));
-    products.statusMessage = `Ценники сохранены: ${savePath}`;
+    await writeTextFile(
+      savePath,
+      buildLabelsHtml(rowsData, {
+        companyName: settings.companyName,
+        companyUnp: settings.companyUnp,
+        printBarcode: settings.printBarcode,
+      })
+    );
   } catch (e) {
     localError.value = `Ошибка сохранения: ${e.message || e}`;
+    return;
   }
+
+  // Файл сохранён — считаем, что эти цены ушли на ценники.
+  try {
+    await markLabelsPrinted(rowsData);
+  } catch (e) {
+    console.error("Не удалось запомнить напечатанные цены:", e);
+  }
+
+  const skipped = calculated.length - rowsData.length;
+  const skippedNote = skipped ? ` (пропущено без изменений: ${skipped})` : "";
+  products.statusMessage = `Ценники сохранены: ${rowsData.length} шт${skippedNote} — ${savePath}`;
 }
 </script>
 
@@ -171,7 +224,13 @@ async function handleGenerateLabels() {
 
     <div class="footer-row">
       <p class="status-line">{{ products.statusMessage }}</p>
-      <button type="button" class="btn-clear" @click="handleClearTable">Очистить таблицу</button>
+      <div class="footer-actions">
+        <label class="only-changed" title="Печатать ценники только для товаров, у которых розничная цена изменилась с прошлой печати">
+          <input v-model="onlyChangedLabels" type="checkbox" @change="onOnlyChangedToggle" />
+          Ценники только по изменившимся
+        </label>
+        <button type="button" class="btn-clear" @click="handleClearTable">Очистить таблицу</button>
+      </div>
     </div>
   </section>
 </template>
@@ -215,6 +274,24 @@ async function handleGenerateLabels() {
   margin: 0;
   font-size: 12.5px;
   color: var(--color-ink-muted);
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.only-changed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-ink-muted);
+  cursor: pointer;
+}
+.only-changed input {
+  accent-color: var(--color-brand);
 }
 
 .btn-clear {

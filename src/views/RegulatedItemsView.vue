@@ -1,8 +1,6 @@
 <script setup>
 import { ref, onMounted } from "vue";
-import { emit } from "@tauri-apps/api/event";
 import { useSettingsStore } from "../stores/settings.js";
-import { REGULATED_ITEMS_UPDATED_EVENT } from "../lib/windows.js";
 import defaultRegulatedItems from "../assets/regulated_items.json";
 
 const settings = useSettingsStore();
@@ -77,7 +75,6 @@ async function handleSave() {
         })),
     };
     await settings.setCustomRegulatedItems(payload);
-    await emit(REGULATED_ITEMS_UPDATED_EVENT, {});
     saveState.value = "saved";
     setTimeout(() => {
       if (saveState.value === "saved") saveState.value = "";
@@ -94,7 +91,6 @@ async function handleResetDefaults() {
   );
   if (!confirmed) return;
   await settings.resetToDefaultRegulatedItems();
-  await emit(REGULATED_ITEMS_UPDATED_EVENT, {});
   categories.value = defaultRegulatedItems.categories.map(toEditable);
 }
 
@@ -224,11 +220,17 @@ onMounted(loadCurrent);
   display: flex;
   align-items: center;
   gap: 8px;
+
   position: sticky;
   top: 0;
+  z-index: 20;
+
+  width: 100%;
+  box-sizing: border-box;
+
   background: var(--color-paper);
   padding: 8px 0;
-  z-index: 2;
+  margin-top: -8px;
 }
 
 .spacer {

@@ -3,15 +3,10 @@
   "identifier": "default",
   "description": "Права для главного окна и окна редактора категорий регулирования",
   "windows": [
-    "main",
-    "regulated-items"
+    "main"
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-create",
-    "core:webview:allow-create-webview-window",
-    "core:event:allow-listen",
-    "core:event:allow-emit",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",

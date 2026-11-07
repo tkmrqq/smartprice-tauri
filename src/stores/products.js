@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { calculateBelarusPrice } from "../lib/calculator.js";
-import { saveCalculation } from "../lib/db.js";
+import { saveCalculation, getCatalogByBarcodes, upsertCatalogFromCalculation } from "../lib/db.js";
+import { catalogKey, mergeWithCatalog, buildCatalogRecord } from "../lib/catalog.js";
 
 const DEFAULTS = {
   weight: "1,0",
@@ -30,6 +31,7 @@ function emptyRow(overrides = {}) {
   return {
     id: _nextId++,
     name: "",
+    barcode: "",
     purchasePrice: "",
     weight: DEFAULTS.weight,
     unit: DEFAULTS.unit,
@@ -38,6 +40,8 @@ function emptyRow(overrides = {}) {
     vat: DEFAULTS.vat,
     sortGrade: "",
     country: DEFAULTS.country,
+    // Закупка по прошлому расчёту этого товара (из справочника) — для значка роста/падения
+    prevPurchasePrice: "",
     // Рассчитываемые поля (только для чтения в UI):
     retailPrice: "",
     pricePerUnit: "",
@@ -66,11 +70,19 @@ export const useProductsStore = defineStore("products", {
       const weightOrVolume = overrides.weightOrVolume;
       const row = emptyRow({
         name: overrides.name ?? "",
+        barcode: overrides.barcode != null ? String(overrides.barcode).trim() : "",
         purchasePrice: overrides.purchasePrice != null ? String(overrides.purchasePrice) : "",
         weight: formatWeight(weightOrVolume),
         unit: guessUnit(weightOrVolume, overrides.unit),
         vat: overrides.vat != null ? String(overrides.vat) : DEFAULTS.vat,
         country: overrides.country || DEFAULTS.country,
+        markup: overrides.markup != null && overrides.markup !== "" ? String(overrides.markup) : DEFAULTS.markup,
+        supplierMarkup:
+          overrides.supplierMarkup != null && overrides.supplierMarkup !== ""
+            ? String(overrides.supplierMarkup)
+            : DEFAULTS.supplierMarkup,
+        sortGrade: overrides.sortGrade != null ? String(overrides.sortGrade) : "",
+        prevPurchasePrice: overrides.prevPurchasePrice != null ? String(overrides.prevPurchasePrice) : "",
       });
       this.rows.push(row);
       return row;
@@ -86,18 +98,29 @@ export const useProductsStore = defineStore("products", {
       if (row) row[field] = value;
     },
 
-    /** Импорт из накладной ЭДИН или результата OCR — оба дают одинаковую форму продукта. */
-    importProducts(products) {
-      for (const p of products) {
-        this.addRow({
-          name: p.name,
-          purchasePrice: p.purchasePrice,
-          weightOrVolume: p.weightOrVolume,
-          unit: p.unit,
-          vat: p.vat,
-          country: p.country,
-        });
+    /**
+     * Импорт из накладной ЭДИН, фото или сравнения прайсов — все дают одинаковую
+     * форму товара. Если товар (по штрихкоду) уже есть в справочнике, из него
+     * подставляются наценки, сорт, вес и единица, а также прошлая закупка.
+     * @returns {Promise<{added: number, filled: number}>}
+     */
+    async importProducts(products) {
+      let catalog = new Map();
+      try {
+        catalog = await getCatalogByBarcodes(products.map((p) => catalogKey(p.barcode)));
+      } catch (e) {
+        // Справочник — удобство, а не обязательное условие: без него просто
+        // импортируем как раньше.
+        console.error("Справочник недоступен:", e);
       }
+
+      let filled = 0;
+      for (const p of products) {
+        const { product, filled: wasFilled } = mergeWithCatalog(p, catalog.get(catalogKey(p.barcode)));
+        if (wasFilled) filled += 1;
+        this.addRow(product);
+      }
+      return { added: products.length, filled };
     },
 
     /** Пересчитывает все строки с непустым названием, сохраняет в историю. */
@@ -139,6 +162,7 @@ export const useProductsStore = defineStore("products", {
             try {
               await saveCalculation({
                 name: row.name,
+                barcode: row.barcode,
                 category: result.category,
                 purchasePrice: result.purchasePrice,
                 weightOrVolume: row.weight,
@@ -158,6 +182,14 @@ export const useProductsStore = defineStore("products", {
               // Не блокируем расчёт, если запись в историю не удалась —
               // как и в оригинале (там это тоже best-effort try/except).
               console.error("Не удалось сохранить в историю:", dbError);
+            }
+
+            // Запоминаем товар в справочнике (только если есть штрихкод)
+            try {
+              const record = buildCatalogRecord(row, result);
+              if (record) await upsertCatalogFromCalculation(record);
+            } catch (catalogError) {
+              console.error("Не удалось сохранить в справочник:", catalogError);
             }
           } catch (calcError) {
             row.calcError = calcError.message;

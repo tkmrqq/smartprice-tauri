@@ -4,6 +4,7 @@ import { getAllHistory, searchHistoryByName, deleteEntry, clearHistory } from ".
 import { useProductsStore } from "../stores/products.js";
 import { useRouter } from "vue-router";
 import StatusChip from "../components/StatusChip.vue";
+import { groupEntriesByDay, formatTime } from "../lib/historyGroups.js";
 
 const products = useProductsStore();
 const router = useRouter();
@@ -99,6 +100,7 @@ async function handleClearAll() {
 function addEntryToTable(entry) {
   const row = products.addRow({
     name: entry.name,
+    barcode: entry.barcode,
     purchasePrice: entry.purchase_price,
     weightOrVolume: entry.weight_or_volume,
     unit: entry.unit,
@@ -140,6 +142,24 @@ function reuseSelected() {
 }
 
 const hasEntries = computed(() => entries.value.length > 0);
+
+// ---- Группировка по датам (логика — в lib/historyGroups.js) ----------
+const grouped = computed(() => groupEntriesByDay(entries.value));
+
+function groupSelectedCount(group) {
+  return group.ids.filter((id) => selectedIds.value.has(id)).length;
+}
+
+function toggleGroup(group) {
+  const next = new Set(selectedIds.value);
+  const allChosen = groupSelectedCount(group) === group.ids.length;
+  for (const id of group.ids) {
+    if (allChosen) next.delete(id);
+    else next.add(id);
+  }
+  selectedIds.value = next;
+  lastToggledIndex = null;
+}
 
 onMounted(load);
 </script>
@@ -190,7 +210,7 @@ onMounted(load);
                 @change="toggleAll"
               />
             </th>
-            <th>Дата</th>
+            <th>Время</th>
             <th>Наименование</th>
             <th>Закуп.</th>
             <th>Наценка</th>
@@ -201,33 +221,47 @@ onMounted(load);
           </tr>
         </thead>
         <tbody>
-          <tr
-            v-for="(entry, index) in entries"
-            :key="entry.id"
-            :class="{ 'row-selected': isSelected(entry.id) }"
-          >
-            <td class="col-check">
-              <input
-                type="checkbox"
-                class="check"
-                :checked="isSelected(entry.id)"
-                @click="toggleSelected(index, $event)"
-              />
-            </td>
-            <td class="tabular cell-date">{{ entry.created_at }}</td>
-            <td>{{ entry.name }}</td>
-            <td class="tabular cell-num">{{ entry.purchase_price }}</td>
-            <td class="tabular cell-num">{{ entry.applied_markup }}%</td>
-            <td class="tabular cell-num cell-strong">{{ entry.retail_price }}</td>
-            <td class="tabular cell-num">{{ entry.price_per_unit }}</td>
-            <td>
-              <StatusChip :status="entry.regulation_status" :limited="entry.markup_limited === 1" />
-            </td>
-            <td class="cell-actions">
-              <button type="button" class="link-btn" @click="reuseEntry(entry)">Повторить</button>
-              <button type="button" class="link-btn link-danger" @click="handleDelete(entry.id)">Удалить</button>
-            </td>
-          </tr>
+          <template v-for="item in grouped" :key="item.key">
+            <tr v-if="item.type === 'date'" class="date-row">
+              <td class="col-check">
+                <input
+                  type="checkbox"
+                  class="check"
+                  title="Выбрать все записи этого дня"
+                  :checked="groupSelectedCount(item) === item.ids.length"
+                  :indeterminate.prop="groupSelectedCount(item) > 0 && groupSelectedCount(item) < item.ids.length"
+                  @change="toggleGroup(item)"
+                />
+              </td>
+              <td colspan="8" class="date-cell">
+                <span class="date-label">{{ item.label }}</span>
+                <span class="date-count">{{ item.ids.length }}</span>
+              </td>
+            </tr>
+            <tr v-else :class="{ 'row-selected': isSelected(item.entry.id) }">
+              <td class="col-check">
+                <input
+                  type="checkbox"
+                  class="check"
+                  :checked="isSelected(item.entry.id)"
+                  @click="toggleSelected(item.index, $event)"
+                />
+              </td>
+              <td class="tabular cell-date">{{ formatTime(item.entry.created_at) }}</td>
+              <td>{{ item.entry.name }}</td>
+              <td class="tabular cell-num">{{ item.entry.purchase_price }}</td>
+              <td class="tabular cell-num">{{ item.entry.applied_markup }}%</td>
+              <td class="tabular cell-num cell-strong">{{ item.entry.retail_price }}</td>
+              <td class="tabular cell-num">{{ item.entry.price_per_unit }}</td>
+              <td>
+                <StatusChip :status="item.entry.regulation_status" :limited="item.entry.markup_limited === 1" />
+              </td>
+              <td class="cell-actions">
+                <button type="button" class="link-btn" @click="reuseEntry(item.entry)">Повторить</button>
+                <button type="button" class="link-btn link-danger" @click="handleDelete(item.entry.id)">Удалить</button>
+              </td>
+            </tr>
+          </template>
           <tr v-if="!isLoading && !hasEntries">
             <td colspan="9" class="empty-cell">
               {{ query ? "Ничего не найдено." : "История пуста — здесь появятся ваши расчёты." }}
@@ -329,6 +363,38 @@ onMounted(load);
   height: 15px;
   accent-color: var(--color-brand);
   cursor: pointer;
+}
+
+/* Разделитель по датам */
+tbody tr.date-row td {
+  background: var(--color-paper);
+  border-top: 1px solid var(--color-line-strong);
+  border-bottom: 1px solid var(--color-line);
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.date-cell {
+  display: table-cell;
+}
+.date-label {
+  font-family: var(--font-display);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--color-ink);
+}
+.date-count {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+tbody tr:first-child.date-row td {
+  border-top: none;
 }
 
 tbody tr.row-selected {

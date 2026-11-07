@@ -2,8 +2,14 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useProductsStore } from "../stores/products.js";
 import StatusChip from "./StatusChip.vue";
+import { purchaseDelta, formatPercent } from "../lib/catalog.js";
 
 const products = useProductsStore();
+
+// Изменение закупки относительно прошлого расчёта этого товара (из справочника)
+function delta(row) {
+  return purchaseDelta(row.prevPurchasePrice, row.purchasePrice);
+}
 
 function rowClass(row) {
   if (row.calcError) return "row-error";
@@ -21,6 +27,7 @@ function rowClass(row) {
 // ---------------------------------------------------------------------
 const COLS = [
   { key: "name", label: "Наименование товара", frac: 0.2, min: 140 },
+  { key: "barcode", label: "Штрихкод", frac: 0.09, min: 112 },
   { key: "purchasePrice", label: "Закуп., BYN", frac: 0.07, min: 72 },
   { key: "weight", label: "Вес/объём", frac: 0.06, min: 66 },
   { key: "unit", label: "Ед.", frac: 0.05, min: 56 },
@@ -191,7 +198,18 @@ onBeforeUnmount(() => {
               />
             </td>
             <td>
+              <input v-model="row.barcode" type="text" inputmode="numeric" class="cell-input tabular" placeholder="штрихкод" />
+            </td>
+            <td>
               <input v-model="row.purchasePrice" type="text" class="cell-input tabular cell-num" placeholder="0,00" />
+              <div
+                v-if="delta(row)"
+                class="price-delta"
+                :class="delta(row).direction"
+                :title="'Прошлая закупка: ' + row.prevPurchasePrice"
+              >
+                {{ delta(row).direction === "up" ? "▲" : "▼" }} {{ formatPercent(delta(row).pct) }}%
+              </div>
             </td>
             <td>
               <input v-model="row.weight" type="text" class="cell-input tabular cell-num" />
@@ -428,6 +446,23 @@ tbody tr.row-error {
 .icon-btn:hover {
   color: var(--color-danger);
   background: var(--color-danger-tint);
+}
+
+/* Рост закупки — красным (товар подорожал), падение — зелёным */
+.price-delta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-align: right;
+  padding-right: 7px;
+  margin-top: -1px;
+  white-space: nowrap;
+}
+.price-delta.up {
+  color: var(--color-danger);
+}
+.price-delta.down {
+  color: var(--color-brand-dark);
 }
 
 .row-error-text {

@@ -28,9 +28,7 @@ export function normalizeName(raw) {
 }
 
 export function tokenize(raw) {
-  const normalized = normalizeName(raw)
-    .replace(/\d+(?:[.,]\d+)?\s*(?:кг|kg|грамм(?:а|ов)?|гр|г|g|мл|ml|литр(?:а|ов)?|л|l)(?=$|[^\p{L}])/giu, " ")
-    .replace(/[*×xх]\s*\d+\s*(?:шт|штук|pcs?)(?=$|[^\p{L}])/giu, " ");
+  const normalized = normalizeName(raw);
   return normalized
     .split(" ")
     .map((t) => t.replace(/[^a-zа-яё0-9]/gi, ""))
@@ -48,55 +46,6 @@ export function jaccardSimilarity(tokensA, tokensB) {
 }
 
 const DEFAULT_NAME_SIMILARITY_THRESHOLD = 0.6;
-// Если у двух позиций разные штрихкоды, объединяем только при почти
-// идентичном названии — иначе это, скорее всего, разные SKU.
-const CONFLICTING_BARCODE_NAME_THRESHOLD = 0.95;
-
-function hasConflictingBarcode(item, group) {
-  return group.items.some(
-    (existing) => item.barcode && existing.barcode && item.barcode !== existing.barcode
-  );
-}
-
-function measureSummary(items) {
-  const known = items.map((item) => item.measure).filter((measure) => measure?.baseValue > 0);
-  const dimensions = new Set(known.map((measure) => measure.dimension));
-  if (dimensions.size > 1) {
-    return { commonDimension: null, mismatch: true, reason: "У товаров разные единицы измерения" };
-  }
-  if (known.length && known.length !== items.length) {
-    return { commonDimension: null, mismatch: true, reason: "Фасовка указана не у всех поставщиков" };
-  }
-  if (!known.length) return { commonDimension: null, mismatch: false, reason: "" };
-
-  const values = known.map((measure) => measure.baseValue);
-  const ratio = Math.max(...values) / Math.min(...values);
-  return {
-    commonDimension: known[0].dimension,
-    mismatch: ratio > 1.05,
-    reason: ratio > 1.05 ? "Разная фасовка — проверьте, что это нужный товар" : "",
-  };
-}
-
-function formatMeasure(measure) {
-  if (!measure?.baseValue) return "";
-  const isMass = measure.dimension === "mass";
-  const itemAmount = measure.unitAmount ?? measure.baseValue;
-  const useLargeUnit = itemAmount >= 1000;
-  const amount = useLargeUnit ? itemAmount / 1000 : itemAmount;
-  const unit = isMass
-    ? useLargeUnit ? "кг" : "г"
-    : useLargeUnit ? "л" : "мл";
-  const formatted = `${Number(amount.toFixed(3))} ${unit}`;
-  return measure.packCount > 1 ? `${formatted} × ${measure.packCount} шт. (${formatTotalMeasure(measure)})` : formatted;
-}
-
-function formatTotalMeasure(measure) {
-  const large = measure.baseValue >= 1000;
-  const amount = large ? measure.baseValue / 1000 : measure.baseValue;
-  const unit = measure.dimension === "mass" ? large ? "кг" : "г" : large ? "л" : "мл";
-  return `${Number(amount.toFixed(3))} ${unit}`;
-}
 
 /**
  * @param {{supplierName: string, products: object[]}[]} supplierDatasets
@@ -108,20 +57,20 @@ export function matchAcrossSuppliers(supplierDatasets, options = {}) {
   const threshold = options.nameSimilarityThreshold ?? DEFAULT_NAME_SIMILARITY_THRESHOLD;
 
   /** @type {{key:string, matchType:string, items: object[], tokens: string[]}[]} */
-  const barcodeGroups = [];
+  const groups = [];
   const barcodeGroupIndex = new Map();
 
   const allItems = [];
-  for (const [datasetIndex, dataset] of supplierDatasets.entries()) {
-    for (const [productIndex, product] of dataset.products.entries()) {
+  for (const dataset of supplierDatasets) {
+    for (const product of dataset.products) {
       allItems.push({
-        identity: `${dataset.id ?? datasetIndex}:${product.sourceRow ?? productIndex}:${productIndex}`,
         supplier: dataset.supplierName,
         name: product.name,
         price: product.price,
-        measure: product.measure ?? null,
-        measureLabel: formatMeasure(product.measure),
         barcode: normalizeBarcode(product.barcode),
+        // Исходный код как в прайсе (с ведущими нулями) — нужен для печати
+        // на ценнике; normalizeBarcode отрезает нули только для сравнения.
+        rawBarcode: String(product.barcode ?? "").trim(),
         vatRate: product.vatRate,
         packQty: product.packQty,
         country: product.country,
@@ -130,39 +79,26 @@ export function matchAcrossSuppliers(supplierDatasets, options = {}) {
     }
   }
 
-  // Проход 1: группировка по штрихкоду — самый надёжный признак, но
-  // только если один и тот же код встретился у нескольких поставщиков.
-  const fuzzyCandidates = [];
+  // Проход 1: группировка по штрихкоду — самый надёжный признак.
+  const rest = [];
   for (const item of allItems) {
     if (!item.barcode) {
-      fuzzyCandidates.push(item);
+      rest.push(item);
       continue;
     }
     if (barcodeGroupIndex.has(item.barcode)) {
-      const group = barcodeGroups[barcodeGroupIndex.get(item.barcode)];
-      group.items.push(item);
-      group.scores.push(1);
+      groups[barcodeGroupIndex.get(item.barcode)].items.push(item);
     } else {
-      barcodeGroupIndex.set(item.barcode, barcodeGroups.length);
-      barcodeGroups.push({ key: `barcode:${item.barcode}`, matchType: "barcode", items: [item], tokens: item.tokens, scores: [1] });
+      barcodeGroupIndex.set(item.barcode, groups.length);
+      groups.push({ key: `barcode:${item.barcode}`, matchType: "barcode", items: [item], tokens: item.tokens });
     }
   }
 
-  const confirmedBarcodeGroups = [];
-  for (const group of barcodeGroups) {
-    const supplierCount = new Set(group.items.map((i) => i.supplier)).size;
-    if (supplierCount > 1) {
-      confirmedBarcodeGroups.push(group);
-    } else {
-      fuzzyCandidates.push(...group.items);
-    }
-  }
-
-  // Проход 2: нечёткое сравнение по токенам названия для всего, что не
-  // подтвердилось штрихкодом у ≥2 поставщиков (в т.ч. при ошибочном/чужом
-  // штрихкоде в одном из прайсов).
+  // Проход 2: для оставшихся (без штрихкода) — нечёткое сравнение по
+  // токенам названия, жадная кластеризация (каждый товар присоединяется
+  // к первой достаточно похожей группе, иначе создаёт новую).
   const fuzzyGroups = [];
-  for (const item of fuzzyCandidates) {
+  for (const item of rest) {
     let bestGroup = null;
     let bestScore = 0;
     for (const group of fuzzyGroups) {
@@ -172,63 +108,34 @@ export function matchAcrossSuppliers(supplierDatasets, options = {}) {
         bestGroup = group;
       }
     }
-    const effectiveThreshold =
-      bestGroup && hasConflictingBarcode(item, bestGroup)
-        ? CONFLICTING_BARCODE_NAME_THRESHOLD
-        : threshold;
-    if (bestGroup && bestScore >= effectiveThreshold) {
+    if (bestGroup && bestScore >= threshold) {
       bestGroup.items.push(item);
-      bestGroup.scores.push(bestScore);
       // tokens группы = токены первого товара (эталон); можно было бы
       // усреднять, но это усложнение того не стоит для UI-инструмента.
     } else {
-      fuzzyGroups.push({ key: `name:${item.tokens.join("-")}`, matchType: "name", items: [item], tokens: item.tokens, scores: [1] });
+      fuzzyGroups.push({ key: `name:${item.tokens.join("-")}`, matchType: "name", items: [item], tokens: item.tokens });
     }
   }
 
-  const allGroups = [...confirmedBarcodeGroups, ...fuzzyGroups];
+  const allGroups = [...groups, ...fuzzyGroups];
 
   return allGroups
     .map((group) => {
       const items = group.items;
-      const measures = measureSummary(items);
-      const compareByUnit = false;
-      const comparisonUnit = "BYN/уп.";
-      for (const item of items) {
-        item.unitPrice = item.measure?.baseValue
-          ? item.price * 1000 / item.measure.baseValue
-          : null;
-        item.comparisonPrice = compareByUnit && item.unitPrice != null ? item.unitPrice : item.price;
-      }
-      const sorted = [...items].sort((a, b) => a.comparisonPrice - b.comparisonPrice);
+      const sorted = [...items].sort((a, b) => a.price - b.price);
       const cheapest = sorted[0];
       const mostExpensive = sorted[sorted.length - 1];
       const supplierCount = new Set(items.map((i) => i.supplier)).size;
-      const matchConfidence = group.matchType === "barcode" ? 1 : Math.min(...(group.scores ?? [0]));
-      const reviewReasons = [];
-      if (measures.reason) reviewReasons.push(measures.reason);
-      if (group.matchType === "name" && matchConfidence < 0.8) {
-        reviewReasons.push("Низкая уверенность сопоставления по названию");
-      }
-      const decisionKey = items.map((item) => item.identity).sort().join("|");
 
       return {
         key: group.key,
-        decisionKey,
         matchType: group.matchType,
-        matchConfidence,
-        needsReview: reviewReasons.length > 0,
-        reviewReasons,
-        comparisonUnit,
-        compareByUnit,
         displayName: cheapest.name,
         items: sorted,
         supplierCount,
         cheapest,
-        savingsAbs: mostExpensive.comparisonPrice - cheapest.comparisonPrice,
-        savingsPct: mostExpensive.comparisonPrice > 0
-          ? (mostExpensive.comparisonPrice - cheapest.comparisonPrice) / mostExpensive.comparisonPrice
-          : 0,
+        savingsAbs: mostExpensive.price - cheapest.price,
+        savingsPct: mostExpensive.price > 0 ? (mostExpensive.price - cheapest.price) / mostExpensive.price : 0,
       };
     })
     .sort((a, b) => b.savingsAbs - a.savingsAbs);

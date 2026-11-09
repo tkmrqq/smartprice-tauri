@@ -1,12 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { readWorkbook, detectColumnMapping, extractProducts } from "../src/lib/priceListParser.js";
 
 const KRAFT_PATH =
   "/mnt/user-data/uploads/Крафт_Общий_прайс_22_07_551f7748_cd82_40b7_bef5_b88801d74092.xlsx";
 const RESTORSERVICE_PATH =
   "/mnt/user-data/uploads/Прайс_15_09_26__13fbf76c-e626-4612-8ffd-0b9a1a6c60c8.xls";
+
+// Реальные прайсы в репозиторий не кладём; пока нет обезличенных фикстур
+// в test/fixtures/, тесты на них пропускаются, если файла нет на диске.
+const skipKraft = existsSync(KRAFT_PATH) ? false : "нет файла прайса Крафт";
+const skipRestor = existsSync(RESTORSERVICE_PATH) ? false : "нет файла прайса RestorService";
 
 function loadRows(path) {
   const buffer = readFileSync(path);
@@ -49,7 +54,7 @@ test("Kraft-like header: name column is not confused with external product code"
   assert.equal(products[0].price, 4.28);
 });
 
-test("Kraft price list: detects header row and all key columns", () => {
+test("Kraft price list: detects header row and all key columns", { skip: skipKraft }, () => {
   const rows = loadRows(KRAFT_PATH);
   const { headerRowIndex, columns, confidence } = detectColumnMapping(rows);
 
@@ -62,7 +67,7 @@ test("Kraft price list: detects header row and all key columns", () => {
   assert.equal(typeof columns.country, "number");
 });
 
-test("Kraft price list: extracts real products, skips category rows", () => {
+test("Kraft price list: extracts real products, skips category rows", { skip: skipKraft }, () => {
   const rows = loadRows(KRAFT_PATH);
   const { headerRowIndex, columns } = detectColumnMapping(rows);
   const products = extractProducts(rows, headerRowIndex, {
@@ -83,7 +88,7 @@ test("Kraft price list: extracts real products, skips category rows", () => {
   assert.equal(categoryRow, undefined);
 });
 
-test("RestorService (.xls) price list: detects header row and columns", () => {
+test("RestorService (.xls) price list: detects header row and columns", { skip: skipRestor }, () => {
   const rows = loadRows(RESTORSERVICE_PATH);
   const { headerRowIndex, columns, confidence } = detectColumnMapping(rows);
 
@@ -94,7 +99,7 @@ test("RestorService (.xls) price list: detects header row and columns", () => {
   assert.equal(typeof columns.priceNoVat, "number");
 });
 
-test("RestorService (.xls) price list: extracts real products, skips company header rows", () => {
+test("RestorService (.xls) price list: extracts real products, skips company header rows", { skip: skipRestor }, () => {
   const rows = loadRows(RESTORSERVICE_PATH);
   const { headerRowIndex, columns } = detectColumnMapping(rows);
   const products = extractProducts(rows, headerRowIndex, {

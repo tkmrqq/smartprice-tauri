@@ -46,6 +46,10 @@ export function jaccardSimilarity(tokensA, tokensB) {
 }
 
 const DEFAULT_NAME_SIMILARITY_THRESHOLD = 0.6;
+// Разные штрихкоды у одного товара бывают (поставщик ставит свой код блока),
+// но склеивать их можно только при почти одинаковых названиях: при 0,6
+// слились бы «80г» и «90г».
+const BARCODE_MISMATCH_NAME_THRESHOLD = 0.9;
 
 /**
  * @param {{supplierName: string, products: object[]}[]} supplierDatasets
@@ -93,6 +97,28 @@ export function matchAcrossSuppliers(supplierDatasets, options = {}) {
       groups.push({ key: `barcode:${item.barcode}`, matchType: "barcode", items: [item], tokens: item.tokens });
     }
   }
+
+  // Проход 1б: группы с разными штрихкодами, но почти одинаковым названием.
+  // Склеиваем только группы без общих поставщиков — у одного поставщика
+  // разные коды означают разные позиции.
+  const barcodeGroups = [];
+  for (const group of groups) {
+    const suppliers = new Set(group.items.map((i) => i.supplier));
+    const target = barcodeGroups.find(
+      (g) =>
+        ![...suppliers].some((s) => g.suppliers.has(s)) &&
+        jaccardSimilarity(group.tokens, g.tokens) >= BARCODE_MISMATCH_NAME_THRESHOLD
+    );
+    if (target) {
+      target.items.push(...group.items);
+      for (const s of suppliers) target.suppliers.add(s);
+      target.matchType = "name";
+    } else {
+      barcodeGroups.push({ ...group, suppliers });
+    }
+  }
+  groups.length = 0;
+  for (const { suppliers, ...group } of barcodeGroups) groups.push(group);
 
   // Проход 2: для оставшихся (без штрихкода) — нечёткое сравнение по
   // токенам названия, жадная кластеризация (каждый товар присоединяется
